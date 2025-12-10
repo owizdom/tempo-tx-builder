@@ -1,4 +1,4 @@
-# Transaction Builder & Simulator CLI
+# Tempo Transaction Builder & Simulator CLI
 
 A  CLI tool for building, simulating, and estimating gas for Tempo blockchain transactions.
 
