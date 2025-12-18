@@ -1,5 +1,6 @@
 import inquirer from 'inquirer'
 import chalk from 'chalk'
+import type { Address } from 'viem'
 import { publicClient } from '../config.js'
 import type { Transaction } from '../types.js'
 import {
@@ -17,7 +18,11 @@ export async function buildTransactionInteractively(
 ): Promise<Transaction> {
 	console.log(chalk.blue('\nBuilding Transaction\n'))
 
-	const transaction: Transaction = {}
+	const transaction: Transaction = {
+		type: 0x76, // New Tempo transaction type
+		calls: [], // Will be populated with calls
+		nonceKey: 0n, // Default to protocol nonce (key 0)
+	}
 
 	// From address
 	if (fromAddress) {
@@ -78,23 +83,29 @@ export async function buildTransactionInteractively(
 
 		const amount = calculateTokenAmount(amountInput, tokenChoice.decimals)
 
-		// Generate calldata
-		transaction.to = tokenChoice.address
-		transaction.value = 0n // No native value
-		transaction.data = encodeTransferCalldata(recipient, amount)
+		// Generate calldata using new calls format
+		transaction.calls = [
+			{
+				to: tokenChoice.address,
+				value: 0n, // No native value
+				input: encodeTransferCalldata(recipient, amount),
+			},
+		]
 
 		console.log(chalk.green(`\nGenerated transfer calldata for ${amountInput} ${tokenChoice.symbol} to ${recipient}`))
 		console.log(chalk.gray(`Token contract: ${tokenChoice.address}`))
-		console.log(chalk.gray(`Calldata: ${transaction.data}`))
+		console.log(chalk.gray(`Calldata: ${transaction.calls[0].input}`))
 	} else {
-		// Regular transaction building
+		// Regular transaction building using new calls format
 		// To address
 		const hasTo = await promptConfirm('Does this transaction have a recipient?')
+		let toAddress: Address | undefined
 		if (hasTo) {
-			transaction.to = await promptAddress('To address:')
+			toAddress = await promptAddress('To address:')
 		}
 
 		// Value (only for contract calls, not transfers)
+		let value: bigint | undefined = undefined
 		if (txType === 'contract-call') {
 			const hasValue = await promptConfirm('Does this transaction send native value?')
 			if (hasValue) {
@@ -102,24 +113,33 @@ export async function buildTransactionInteractively(
 				const valueStr = await promptBigInt('Value (in wei):')
 				if (valueStr !== undefined && valueStr > 0n) {
 					// Check if sending to zero address - not allowed on Tempo
-					if (transaction.to === '0x0000000000000000000000000000000000000000') {
+					if (toAddress === '0x0000000000000000000000000000000000000000') {
 						console.log(chalk.yellow('\nWarning: Sending value to zero address is not allowed on Tempo. Value will be set to 0.'))
-						transaction.value = 0n
+						value = 0n
 					} else {
-						transaction.value = valueStr
+						value = valueStr
 					}
 				}
 			}
 		}
 
 		// Data
+		let data: `0x${string}` | undefined = undefined
 		if (txType === 'contract-call' || txType === 'other') {
 			const hasData = await promptConfirm('Does this transaction include calldata?')
 			if (hasData) {
-				const data = await promptHex('Calldata (hex):', true)
-				transaction.data = data as `0x${string}`
+				data = await promptHex('Calldata (hex):', true) as `0x${string}`
 			}
 		}
+
+		// Build call using new format
+		transaction.calls = [
+			{
+				to: toAddress,
+				value: value,
+				input: data,
+			},
+		]
 	}
 
 	// Get nonce if from address is provided
@@ -143,38 +163,29 @@ export async function buildTransactionInteractively(
 		}
 	}
 
+	// Nonce key (for parallelizable nonces)
+	const useCustomNonceKey = await promptConfirm('Use custom nonce key? (0 = protocol nonce, >0 = user nonce)')
+	if (useCustomNonceKey) {
+		const nonceKey = await promptBigInt('Nonce key:', true)
+		if (nonceKey !== undefined) {
+			transaction.nonceKey = nonceKey
+		}
+	}
+
 	// Gas settings
 	const customizeGas = await promptConfirm('Customize gas settings?')
 	if (customizeGas) {
-		const gasType = await inquirer.prompt<{ type: 'legacy' | 'eip1559' }>([
-			{
-				type: 'list',
-				name: 'type',
-				message: 'Gas type:',
-				choices: [
-					{ name: 'Legacy (gasPrice)', value: 'legacy' },
-					{ name: 'EIP-1559 (maxFeePerGas)', value: 'eip1559' },
-				],
-			},
-		])
-
-		if (gasType.type === 'legacy') {
-			const gasPrice = await promptBigInt('Gas price (wei):', true)
-			if (gasPrice !== undefined) {
-				transaction.gasPrice = gasPrice
-			}
-		} else {
-			const maxFeePerGas = await promptBigInt('Max fee per gas (wei):', true)
-			const maxPriorityFeePerGas = await promptBigInt(
-				'Max priority fee per gas (wei):',
-				true,
-			)
-			if (maxFeePerGas !== undefined) {
-				transaction.maxFeePerGas = maxFeePerGas
-			}
-			if (maxPriorityFeePerGas !== undefined) {
-				transaction.maxPriorityFeePerGas = maxPriorityFeePerGas
-			}
+		// Tempo 0x76 transaction type uses EIP-1559 style gas pricing
+		const maxFeePerGas = await promptBigInt('Max fee per gas (wei):', true)
+		const maxPriorityFeePerGas = await promptBigInt(
+			'Max priority fee per gas (wei):',
+			true,
+		)
+		if (maxFeePerGas !== undefined) {
+			transaction.maxFeePerGas = maxFeePerGas
+		}
+		if (maxPriorityFeePerGas !== undefined) {
+			transaction.maxPriorityFeePerGas = maxPriorityFeePerGas
 		}
 
 		const gasLimit = await promptBigInt('Gas limit:', true)

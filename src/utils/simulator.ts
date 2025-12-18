@@ -7,10 +7,24 @@ async function simulateTransactionInternal(
 ): Promise<TransactionResult> {
 	// Use call to simulate the transaction
 	// Tempo chain uses different parameter structure
-	const callParams: any = {
-		to: transaction.to,
-		data: transaction.data,
-		value: transaction.value,
+	// Support new 0x76 format with calls array, fallback to legacy format
+	let callParams: any
+	
+	if (transaction.calls && transaction.calls.length > 0) {
+		// New 0x76 format: use first call (for simulation, we simulate the first call)
+		const firstCall = transaction.calls[0]
+		callParams = {
+			to: firstCall.to,
+			data: firstCall.input,
+			value: firstCall.value,
+		}
+	} else {
+		// Legacy format: use direct to/data/value
+		callParams = {
+			to: transaction.to,
+			data: transaction.data,
+			value: transaction.value,
+		}
 	}
 
 	// Add account if from is provided (some chains support this)
@@ -32,7 +46,21 @@ export async function simulateTransaction(
 ): Promise<TransactionResult> {
 	try {
 		// Validate: Can't send value to zero address on Tempo
-		if (
+		// Check both new calls format and legacy format
+		if (transaction.calls && transaction.calls.length > 0) {
+			for (const call of transaction.calls) {
+				if (
+					call.to === '0x0000000000000000000000000000000000000000' &&
+					call.value &&
+					call.value > 0n
+				) {
+					return {
+						success: false,
+						error: 'Sending value to zero address is not allowed on Tempo',
+					}
+				}
+			}
+		} else if (
 			transaction.to === '0x0000000000000000000000000000000000000000' &&
 			transaction.value &&
 			transaction.value > 0n
@@ -68,11 +96,24 @@ export async function simulateTransaction(
 
 async function estimateGasInternal(transaction: Transaction): Promise<bigint> {
 	// For Tempo, construct estimate parameters
-	// Use 'account' instead of 'from' if supported
-	const estimateParams: any = {
-		to: transaction.to,
-		data: transaction.data,
-		value: transaction.value,
+	// Support new 0x76 format with calls array, fallback to legacy format
+	let estimateParams: any
+	
+	if (transaction.calls && transaction.calls.length > 0) {
+		// New 0x76 format: use first call (for estimation, we estimate the first call)
+		const firstCall = transaction.calls[0]
+		estimateParams = {
+			to: firstCall.to,
+			data: firstCall.input,
+			value: firstCall.value,
+		}
+	} else {
+		// Legacy format: use direct to/data/value
+		estimateParams = {
+			to: transaction.to,
+			data: transaction.data,
+			value: transaction.value,
+		}
 	}
 
 	// Add account if from is provided
@@ -87,7 +128,18 @@ async function estimateGasInternal(transaction: Transaction): Promise<bigint> {
 export async function estimateGas(transaction: Transaction): Promise<bigint> {
 	try {
 		// Validate: Can't send value to zero address on Tempo
-		if (
+		// Check both new calls format and legacy format
+		if (transaction.calls && transaction.calls.length > 0) {
+			for (const call of transaction.calls) {
+				if (
+					call.to === '0x0000000000000000000000000000000000000000' &&
+					call.value &&
+					call.value > 0n
+				) {
+					throw new Error('Sending value to zero address is not allowed on Tempo')
+				}
+			}
+		} else if (
 			transaction.to === '0x0000000000000000000000000000000000000000' &&
 			transaction.value &&
 			transaction.value > 0n

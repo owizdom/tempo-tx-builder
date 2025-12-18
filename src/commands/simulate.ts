@@ -120,26 +120,40 @@ export async function simulateCommand(options: {
 
 				const amount = calculateTokenAmount(amountInput, tokenChoice.decimals)
 
-				// Generate calldata
-				transaction.to = tokenChoice.address
-				transaction.value = 0n // No native value
-				transaction.data = encodeTransferCalldata(recipient, amount)
+				// Generate calldata using new calls format
+				transaction.type = 0x76
+				transaction.calls = [
+					{
+						to: tokenChoice.address,
+						value: 0n, // No native value
+						input: encodeTransferCalldata(recipient, amount),
+					},
+				]
+				transaction.nonceKey = 0n // Default to protocol nonce
 
 				console.log(chalk.green(`\nGenerated transfer calldata for ${amountInput} ${tokenChoice.symbol} to ${recipient}`))
 				console.log(chalk.gray(`Token contract: ${tokenChoice.address}`))
-				console.log(chalk.gray(`Calldata: ${transaction.data}`))
+				console.log(chalk.gray(`Calldata: ${transaction.calls[0].input}`))
 			} else {
+				const from = await promptAddress('From address:')
+				const hasTo = await promptConfirm('Does this transaction have a recipient?')
+				const to = hasTo ? await promptAddress('To address:') : undefined
+				const hasData = await promptConfirm('Does this transaction include calldata?')
+				const data = hasData ? ((await promptHex('Calldata (hex):', true)) as `0x${string}`) : undefined
+				const hasValue = await promptConfirm('Does this transaction send value?')
+				const value = hasValue ? await promptBigInt('Value (in wei):', true) : undefined
+
 				transaction = {
-					from: await promptAddress('From address:'),
-					to: (await promptConfirm('Does this transaction have a recipient?'))
-						? await promptAddress('To address:')
-						: undefined,
-					data: (await promptConfirm('Does this transaction include calldata?'))
-						? ((await promptHex('Calldata (hex):', true)) as `0x${string}`)
-						: undefined,
-					value: (await promptConfirm('Does this transaction send value?'))
-						? await promptBigInt('Value (in wei):', true)
-						: undefined,
+					type: 0x76,
+					from,
+					calls: [
+						{
+							to,
+							value,
+							input: data,
+						},
+					],
+					nonceKey: 0n, // Default to protocol nonce
 				}
 			}
 		}
